@@ -40,10 +40,9 @@ _RE_EP_ONLY = re.compile(
 )
 
 # Quality
-_RE_AUDIO = re.compile(
-    r"\b(Dual[\s.+]?Audio|Multi[\s.+]?Audio|Dual|Multi|Hindi|Tamil|Telugu|Malayalam|English|"
-    r"Japanese|Korean|Chinese|French|German|Spanish|Portuguese|Russian|Arabic|"
-    r"ORG|Original|Dubbed|Subbed|HIN|ENG|TAM|TEL|MAL|JPN)\b",
+_RE_QUALITY = re.compile(
+    r"\b(4K|2160p|1080p|720p|480p|360p|HDRip|BRRip|BluRay|Blu-Ray|WEB-DL|WEBRip|"
+    r"WEB|HDTV|DVDRip|DVDScr|CAMRip|CAM|HC|HDRIP|HQ|SD|HD)\b",
     re.IGNORECASE,
 )
 
@@ -163,14 +162,19 @@ def parse_filename(raw: str) -> ParsedFile:
         groups = mse.groups()
         # Pattern groups: (S,E), (S,EP), (1x,05), (Season,Episode)
         # We fill the first non-None pair
-        if groups[0] and groups[1]:
-            pf.season, pf.episode = int(groups[0]), int(groups[1])
-        elif groups[2] and groups[3]:
-            pf.season, pf.episode = int(groups[2]), int(groups[3])
-        elif groups[4] and groups[5]:
-            pf.season, pf.episode = int(groups[4]), int(groups[5])
-        elif groups[6] and groups[7]:
-            pf.season, pf.episode = int(groups[6]), int(groups[7])
+        # Find first non-None pair of groups
+        matched = False
+        for i in range(0, len(groups) - 1, 2):
+            if groups[i] and groups[i + 1]:
+                pf.season, pf.episode = int(groups[i]), int(groups[i + 1])
+                matched = True
+                break
+        # Handle odd groups (episode only patterns)
+        if not matched:
+            for i in range(0, len(groups)):
+                if groups[i]:
+                    pf.episode = int(groups[i])
+                    break
 
         # Remove the SE token from the name before title extraction
         name = name[: mse.start()] + " " + name[mse.end():]
