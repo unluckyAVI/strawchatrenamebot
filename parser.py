@@ -15,10 +15,13 @@ from typing import Optional
 _RE_SE = re.compile(
     r"""
     (?:
-        [Ss](\d{1,2})[.\-_ ]*[Ee](\d{1,3})   # S01E05 or S01-E05
-      | [Ss](\d{1,2})[.\- ]+[Ee][Pp]?(\d{1,3}) # S01 Ep05
-      | (\d{1,2})[xX](\d{1,3})                 # 1x05
+        [Ss](\d{1,2})[.\-_ ]*[Ee](\d{1,3})        # S01E05 or S01-E05
+      | [Ss](\d{1,2})[.\- ]+[Ee][Pp]?(\d{1,3})    # S01 Ep05
+      | (\d{1,2})[xX](\d{1,3})                     # 1x05
       | [Ss]eason[\s._-]*(\d{1,2})[\s._-]+[Ee]pisode[\s._-]*(\d{1,3})  # Season 1 Episode 5
+      | \[[Ss](\d{1,2})\][\s._-]*\[(\d{1,3})\]    # [S02] [02]
+      | \[(\d{1,2})x(\d{1,3})\]                    # [1x05]
+      | [Ss](\d{1,2})[\s._-]*-[\s._-]*[Ee](\d{1,3}) # S01 - E05
     )
     """,
     re.VERBOSE,
@@ -27,13 +30,20 @@ _RE_SE = re.compile(
 # Episode only (no season):  E05 / Ep05 / Episode 5
 # Excludes quality resolutions: 1080p/720p are already caught by quality regex
 _RE_EP_ONLY = re.compile(
-    r"(?<![x\d])(?:[Ee][Pp]?|[Ee]pisode[\s._]*)(\d{1,3})(?![\dp])"
+    r"""
+    (?:
+        (?<![x\d])(?:[Ee][Pp]?|[Ee]pisode[\s._]*)(\d{1,3})(?![\dp])  # E05 / Ep05
+      | \[(\d{1,3})\](?![\s._]*(?:1080|720|480|360|2160)p)            # [05] but not [1080p]
+    )
+    """,
+    re.VERBOSE,
 )
 
 # Quality
-_RE_QUALITY = re.compile(
-    r"\b(4K|2160p|1080p|720p|480p|360p|HDRip|BRRip|BluRay|Blu-Ray|WEB-DL|WEBRip|"
-    r"WEB|HDTV|DVDRip|DVDScr|CAMRip|CAM|HC|HDRIP|HQ|SD|HD)\b",
+_RE_AUDIO = re.compile(
+    r"\b(Dual[\s.+]?Audio|Multi[\s.+]?Audio|Dual|Multi|Hindi|Tamil|Telugu|Malayalam|English|"
+    r"Japanese|Korean|Chinese|French|German|Spanish|Portuguese|Russian|Arabic|"
+    r"ORG|Original|Dubbed|Subbed|HIN|ENG|TAM|TEL|MAL|JPN)\b",
     re.IGNORECASE,
 )
 
