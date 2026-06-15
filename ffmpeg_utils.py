@@ -13,7 +13,8 @@ import os
 import shutil
 from pathlib import Path
 from typing import Optional
-
+import static_ffmpeg
+static_ffmpeg.add_paths()
 from config import Config
 
 # Language code → friendly label used in stream metadata
