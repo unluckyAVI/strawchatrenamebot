@@ -1,56 +1,62 @@
 """
-Filename parser.
+Filename parser — advanced edition.
 Extracts: title, season, episode, quality, audio type from a raw filename.
+Handles many real-world naming conventions used by anime/movie release groups.
 """
 
 from __future__ import annotations
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
 
 
 # ── Regex patterns ────────────────────────────────────────────────────────────
 
-# Season + Episode:  S01E05 / S01-E05 / S1E5 / 1x05 / Season 1 Episode 5
-_RE_SE = re.compile(
-    r"""
-    (?:
-        [Ss](\d{1,2})[.\-_ ]*[Ee](\d{1,3})        # S01E05 or S01-E05
-      | [Ss](\d{1,2})[.\- ]+[Ee][Pp]?(\d{1,3})    # S01 Ep05
-      | (\d{1,2})[xX](\d{1,3})                     # 1x05
-      | [Ss]eason[\s._-]*(\d{1,2})[\s._-]+[Ee]pisode[\s._-]*(\d{1,3})  # Season 1 Episode 5
-      | \[[Ss](\d{1,2})\][\s._-]*\[(\d{1,3})\]    # [S02] [02]
-      | \[(\d{1,2})x(\d{1,3})\]                    # [1x05]
-      | [Ss](\d{1,2})[\s._-]*-[\s._-]*[Ee](\d{1,3}) # S01 - E05
-    )
-    """,
-    re.VERBOSE,
-)
+# Season + Episode — ordered from most specific to least
+_SE_PATTERNS = [
+    # S01E05 / S01-E05 / S1E5
+    (re.compile(r'[Ss](\d{1,2})[.\-_ ]*[Ee](\d{1,3})'), True),
+    # S01 Ep05 / S01 EP05
+    (re.compile(r'[Ss](\d{1,2})[.\- ]+[Ee][Pp]?(\d{1,3})'), True),
+    # Season 1 Episode 5
+    (re.compile(r'[Ss]eason[\s._-]*(\d{1,2})[\s._-]+[Ee]p(?:isode)?[\s._-]*(\d{1,3})'), True),
+    # [S02] [02] or [S02][02]
+    (re.compile(r'\[S(\d{1,2})\]\s*\[0*(\d{1,3})\]'), True),
+    # [S02E05]
+    (re.compile(r'\[S(\d{1,2})E(\d{1,3})\]'), True),
+    # 1x05
+    (re.compile(r'(\d{1,2})[xX](\d{1,3})'), True),
+    # S01 - E05 (with spaces around dash)
+    (re.compile(r'[Ss](\d{1,2})\s*-\s*[Ee](\d{1,3})'), True),
+    # - 176 - (episode number surrounded by dashes/spaces — anime style)
+    (re.compile(r'(?:^|[\s\-_])[Ee]?(\d{3})[\s\-_]'), False),  # 3-digit ep, no season
+]
 
-# Episode only (no season):  E05 / Ep05 / Episode 5
-# Excludes quality resolutions: 1080p/720p are already caught by quality regex
-_RE_EP_ONLY = re.compile(
-    r"""
-    (?:
-        (?<![x\d])(?:[Ee][Pp]?|[Ee]pisode[\s._]*)(\d{1,3})(?![\dp])  # E05 / Ep05
-      | \[(\d{1,3})\](?![\s._]*(?:1080|720|480|360|2160)p)            # [05] but not [1080p]
-    )
-    """,
-    re.VERBOSE,
-)
+# Episode only patterns (no season)
+_EP_ONLY_PATTERNS = [
+    # E05 / Ep05 / EP05
+    re.compile(r'(?<![x\d\-])[Ee][Pp]?(\d{1,3})(?![\dp])'),
+    # Episode 5
+    re.compile(r'[Ee]pisode[\s._]*(\d{1,3})'),
+    # " - 176 " or "- 176 -" style (anime absolute episode)
+    re.compile(r'(?:^|[\s_])-\s*(\d{1,4})\s*(?:-|$|\[)'),
+    # Leading number "176 - Title" or "176. Title"
+    re.compile(r'^(\d{1,4})[\s]*[-\.]\s*[A-Za-z]'),
+]
 
 # Quality
 _RE_QUALITY = re.compile(
-    r"\b(4K|2160p|1080p|720p|480p|360p|HDRip|BRRip|BluRay|Blu-Ray|WEB-DL|WEBRip|"
-    r"WEB|HDTV|DVDRip|DVDScr|CAMRip|CAM|HC|HDRIP|HQ|SD|HD)\b",
+    r'\b(4K|2160p|1080p|720p|480p|360p|HDRip|BRRip|BluRay|Blu-Ray|'
+    r'WEB-DL|WEBRip|WEB|HDTV|DVDRip|DVDScr|CAMRip|CAM|HC|HDRIP|HQ|SD|HD)\b',
     re.IGNORECASE,
 )
 
 # Audio
 _RE_AUDIO = re.compile(
-    r"\b(Dual[\s.+]?Audio|Multi[\s.+]?Audio|Hindi|Tamil|Telugu|Malayalam|English|"
-    r"Japanese|Korean|Chinese|French|German|Spanish|Portuguese|Russian|Arabic|"
-    r"ORG|Original|Dubbed|Subbed|HIN|ENG|TAM|TEL|MAL|JPN)\b",
+    r'\b(Dual[\s.+]?Audio|Multi[\s.+]?Audio|Dual|Multi|'
+    r'Hindi|Tamil|Telugu|Malayalam|English|Japanese|Korean|Chinese|'
+    r'French|German|Spanish|Portuguese|Russian|Arabic|'
+    r'ORG|Original|Dubbed|Subbed|HIN|ENG|TAM|TEL|MAL|JPN)\b',
     re.IGNORECASE,
 )
 
@@ -58,13 +64,14 @@ _RE_AUDIO = re.compile(
 _STRIP_TOKENS = re.compile(
     r"""
     (?:
-      \[.*?\]|\(.*?\)                         # anything in brackets
-      |-[A-Z][A-Z0-9]{1,10}(?=\b|\Z)          # release group suffix e.g. -GROUP
+      \[.*?\]|\(.*?\)                             # anything in brackets/parens
+      |-[A-Z][A-Z0-9]{1,10}(?=\b|\Z)             # release group e.g. -GROUP
+      |@\S+                                       # @username tags
       |\b(?:
         4K|2160p|1080p|720p|480p|360p
         |HDRip|BRRip|BluRay|Blu-Ray|WEB-DL|WEBRip|WEB|HDTV
         |DVDRip|DVDScr|CAMRip|CAM|HC|HQ|SD|HD
-        |Dual[\s.+]?Audio|Multi[\s.+]?Audio
+        |Dual[\s.+]?Audio|Multi[\s.+]?Audio|Dual|Multi
         |Hindi|Tamil|Telugu|Malayalam|English|Japanese|Korean|Chinese
         |French|German|Spanish|Portuguese|Russian|Arabic
         |ORG|Original|Dubbed|Subbed
@@ -73,6 +80,7 @@ _STRIP_TOKENS = re.compile(
         |AAC|AC3|DTS|DD5?\.1|DD2\.0|MP3|FLAC
         |10bit|8bit|HDR|SDR|DV|Atmos
         |YIFY|YTSAM|ETTV|YTS|RARBG|EVO|FGT|CM|NTb
+        |\d{4}(?=\s|$|[\._\-])                   # year like 2019
       )\b
     )
     """,
@@ -80,10 +88,10 @@ _STRIP_TOKENS = re.compile(
 )
 
 # Common separators → space
-_RE_SEP = re.compile(r"[._\-]+")
+_RE_SEP = re.compile(r'[._]+')
 
 # Extension
-_RE_EXT = re.compile(r"\.[a-zA-Z0-9]{2,5}$")
+_RE_EXT = re.compile(r'\.[a-zA-Z0-9]{2,5}$')
 
 
 # ── Data class ────────────────────────────────────────────────────────────────
@@ -98,11 +106,8 @@ class ParsedFile:
     quality: str = ""
     audio: str = ""
 
-    # ── Derived helpers ───────────────────────────────────────────────────────
-
     @property
     def SE(self) -> str:
-        """Return formatted SE token, e.g. S01-E05.  Empty if no episode."""
         if self.season is not None and self.episode is not None:
             return f"S{self.season:02d}-E{self.episode:02d}"
         if self.episode is not None:
@@ -125,77 +130,77 @@ class ParsedFile:
 # ── Parser ────────────────────────────────────────────────────────────────────
 
 def parse_filename(raw: str) -> ParsedFile:
-    """
-    Parse a filename and return a ParsedFile with extracted metadata.
-
-    Steps:
-    1. Strip extension
-    2. Extract quality
-    3. Extract audio
-    4. Extract S/E
-    5. Build clean title from what remains
-    """
     pf = ParsedFile(raw_name=raw)
 
     # 1. Extension
     m = _RE_EXT.search(raw)
     if m:
-        pf.ext = m.group(0)          # e.g. ".mkv"
+        pf.ext = m.group(0)
         name = raw[: m.start()]
     else:
         name = raw
 
-    # 2. Quality (first match wins)
+    # 2. Quality
     mq = _RE_QUALITY.search(name)
     if mq:
         pf.quality = mq.group(0)
 
-    # 3. Audio (first match wins — could normalise later)
+    # 3. Audio
     ma = _RE_AUDIO.search(name)
     if ma:
-        raw_audio = ma.group(0)
-        pf.audio = _normalise_audio(raw_audio)
+        pf.audio = _normalise_audio(ma.group(0))
 
-    # 4. Season / Episode
-    mse = _RE_SE.search(name)
-    if mse:
-        groups = mse.groups()
-        # Pattern groups: (S,E), (S,EP), (1x,05), (Season,Episode)
-        # We fill the first non-None pair
-        # Find first non-None pair of groups
-        matched = False
-        for i in range(0, len(groups) - 1, 2):
-            if groups[i] and groups[i + 1]:
-                pf.season, pf.episode = int(groups[i]), int(groups[i + 1])
-                matched = True
-                break
-        # Handle odd groups (episode only patterns)
-        if not matched:
-            for i in range(0, len(groups)):
-                if groups[i]:
-                    pf.episode = int(groups[i])
+    # 4. Season + Episode — try each pattern in order
+    se_found = False
+    for pattern, has_season in _SE_PATTERNS:
+        m = pattern.search(name)
+        if m:
+            if has_season:
+                try:
+                    pf.season = int(m.group(1))
+                    pf.episode = int(m.group(2))
+                    se_found = True
+                    name = name[:m.start()] + " " + name[m.end():]
                     break
+                except (IndexError, ValueError):
+                    continue
+            else:
+                try:
+                    pf.episode = int(m.group(1))
+                    se_found = True
+                    name = name[:m.start()] + " " + name[m.end():]
+                    break
+                except (IndexError, ValueError):
+                    continue
 
-        # Remove the SE token from the name before title extraction
-        name = name[: mse.start()] + " " + name[mse.end():]
-    else:
-        mep = _RE_EP_ONLY.search(name)
-        if mep:
-            pf.episode = int(mep.group(1))
-            name = name[: mep.start()] + " " + name[mep.end():]
+    # 5. Episode only fallback
+    if not se_found:
+        for pattern in _EP_ONLY_PATTERNS:
+            m = pattern.search(name)
+            if m:
+                try:
+                    ep = int(m.group(1))
+                    # Sanity check: skip if it looks like a year or resolution
+                    if ep > 1500 or ep in (480, 720, 1080, 2160, 360):
+                        continue
+                    pf.episode = ep
+                    name = name[:m.start()] + " " + name[m.end():]
+                    break
+                except (IndexError, ValueError):
+                    continue
 
-    # 5. Clean title
+    # 6. Clean title
     title = _STRIP_TOKENS.sub(" ", name)
     title = _RE_SEP.sub(" ", title)
-    title = re.sub(r"\s{2,}", " ", title).strip()
-    # Title-case it
+    # Remove leftover dashes/underscores
+    title = re.sub(r'\s*-\s*', ' ', title)
+    title = re.sub(r'\s{2,}', ' ', title).strip()
     pf.title = _smart_title(title)
 
     return pf
 
 
 def _normalise_audio(raw: str) -> str:
-    """Normalise audio labels."""
     lc = raw.lower().replace(".", "").replace("+", "").replace(" ", "")
     if "dual" in lc:
         return "Dual Audio"
@@ -216,22 +221,20 @@ def _normalise_audio(raw: str) -> str:
         "portuguese": "Portuguese", "por": "Portuguese",
         "russian": "Russian", "rus": "Russian",
         "arabic": "Arabic", "ara": "Arabic",
-        "dubbed": "Dubbed",
-        "subbed": "Subbed",
-        "original": "Original",
-        "org": "Original",
+        "dubbed": "Dubbed", "subbed": "Subbed",
+        "original": "Original", "org": "Original",
     }
     return mapping.get(lc, raw.strip())
 
 
-# Small words not capitalised in title case (unless first/last)
-_SMALL_WORDS = {"a", "an", "the", "and", "but", "or", "nor", "for", "so",
-                "yet", "at", "by", "in", "of", "on", "to", "up", "as", "is",
-                "it", "vs", "via"}
+_SMALL_WORDS = {
+    "a", "an", "the", "and", "but", "or", "nor", "for", "so",
+    "yet", "at", "by", "in", "of", "on", "to", "up", "as", "is",
+    "it", "vs", "via",
+}
 
 
 def _smart_title(s: str) -> str:
-    """Title-case with small-word handling."""
     if not s:
         return s
     words = s.split()
@@ -249,30 +252,17 @@ def _smart_title(s: str) -> str:
 # ── Format template renderer ──────────────────────────────────────────────────
 
 def apply_format(template: str, pf: ParsedFile) -> str:
-    """
-    Render a format template with ParsedFile tokens.
-    Removes empty bracket groups like [] or ().
-    """
     tokens = pf.tokens
     result = template
-
-    # Replace {token} placeholders
     for key, val in tokens.items():
         result = result.replace(f"{{{key}}}", val)
-
-    # Remove empty bracket groups: [], (), {}
-    result = re.sub(r"\[\s*\]|\(\s*\)|\{\s*\}", "", result)
-
-    # Collapse multiple spaces
-    result = re.sub(r"\s{2,}", " ", result).strip()
-    result = re.sub(r"\s+([^\w])", r"\1", result)  # space before punctuation
-
+    result = re.sub(r'\[\s*\]|\(\s*\)|\{\s*\}', "", result)
+    result = re.sub(r'\s{2,}', " ", result).strip()
+    result = re.sub(r'\s+([^\w])', r'\1', result)
     return result
 
 
 def build_output_name(pf: ParsedFile, template: str) -> str:
-    """Return the full output filename including extension."""
     stem = apply_format(template, pf)
-    # Sanitise for filesystem
     stem = re.sub(r'[<>:"/\\|?*]', "", stem)
     return stem + pf.ext

@@ -1,7 +1,6 @@
 """
 State manager with MongoDB persistence.
-Stores per-chat: format template, thumbnail path, rename override, awaiting states.
-Falls back to in-memory if MongoDB is unavailable.
+Stores per-chat: format, thumbnail, rename override, custom metadata, awaiting states.
 """
 
 from __future__ import annotations
@@ -10,11 +9,10 @@ from config import Config
 
 try:
     from pymongo import MongoClient
-    from pymongo.collection import Collection
     _mongo_client = MongoClient(Config.MONGO_URI, serverSelectionTimeoutMS=5000)
-    _mongo_client.server_info()  # Test connection
+    _mongo_client.server_info()
     _db = _mongo_client["straWchat_bot"]
-    _col: Collection = _db["user_states"]
+    _col = _db["user_states"]
     MONGO_AVAILABLE = True
     print("[STATE] MongoDB connected successfully ✅")
 except Exception as e:
@@ -23,42 +21,35 @@ except Exception as e:
 
 
 class ChatState:
-    """Holds all mutable state for a single chat."""
-
     def __init__(self):
         self.fmt: str = Config.DEFAULT_FORMAT
         self.thumbnail: Optional[str] = None
         self.rename_override: Optional[str] = None
         self.awaiting_thumbnail: bool = False
         self.awaiting_rename: bool = False
+        self.custom_meta: dict = {}   # customizable metadata fields
 
 
 class StateManager:
-    """
-    State manager that persists fmt and thumbnail to MongoDB.
-    awaiting_* and rename_override are session-only (in-memory).
-    """
-
     def __init__(self):
         self._cache: dict[int, ChatState] = {}
 
     def get(self, chat_id: int) -> ChatState:
         if chat_id not in self._cache:
             state = ChatState()
-            # Load persisted data from MongoDB
             if MONGO_AVAILABLE:
                 try:
                     doc = _col.find_one({"_id": chat_id})
                     if doc:
                         state.fmt = doc.get("fmt", Config.DEFAULT_FORMAT)
                         state.thumbnail = doc.get("thumbnail", None)
+                        state.custom_meta = doc.get("custom_meta", {})
                 except Exception:
                     pass
             self._cache[chat_id] = state
         return self._cache[chat_id]
 
     def _save(self, chat_id: int):
-        """Persist fmt and thumbnail to MongoDB."""
         if not MONGO_AVAILABLE:
             return
         state = self._cache.get(chat_id)
@@ -70,6 +61,7 @@ class StateManager:
                 {"$set": {
                     "fmt": state.fmt,
                     "thumbnail": state.thumbnail,
+                    "custom_meta": state.custom_meta,
                 }},
                 upsert=True,
             )

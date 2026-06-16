@@ -156,7 +156,7 @@ async def handle_media(client: Client, message: Message):
     out_full = _out_path(out_name)
     try:
         await status.edit_text(f"⚙️ **Embedding metadata…**\n`{out_name}`")
-        await embed_metadata(dl_path, out_full, thumbnail_path=state.thumbnail)
+        await embed_metadata(dl_path, out_full, thumbnail_path=state.thumbnail, meta_overrides=state.custom_meta)
     except Exception as e:
         logger.exception("FFmpeg failed")
         await status.edit_text(f"❌ FFmpeg error: {e}")
@@ -190,8 +190,23 @@ async def handle_media(client: Client, message: Message):
             progress=up_reporter.update,
         )
 
-       
-        await client.send_document(**send_kwargs, document=out_full)
+        if message.video or (
+            message.document
+            and (message.document.mime_type or "").startswith("video/")
+        ):
+            await client.send_video(
+                **send_kwargs,
+                video=out_full,
+                supports_streaming=True,
+            )
+        elif message.audio or (
+            message.document
+            and (message.document.mime_type or "").startswith("audio/")
+        ):
+            await client.send_audio(**send_kwargs, audio=out_full)
+        else:
+            # Generic document
+            await client.send_document(**send_kwargs, document=out_full)
 
         await status.delete()
 
@@ -211,4 +226,3 @@ def _cleanup(*paths: str):
                 os.remove(p)
             except OSError:
                 pass
-
