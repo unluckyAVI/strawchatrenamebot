@@ -124,7 +124,7 @@ async def handle_media(client: Client, message: Message):
 
     raw_name = _get_file_name(message)
     logger.info("[%s] Received: %s", chat_id, raw_name)
-
+    
     # ── Determine output filename ─────────────────────────────────────────────
     custom = state_manager.consume_rename_override(chat_id)
     if custom:
@@ -133,7 +133,7 @@ async def handle_media(client: Client, message: Message):
         pf = parse_filename(raw_name)
         out_name = build_output_name(pf, state.fmt)
         out_name = _sanitise(out_name)
-
+    logger.info("[%s] out_name = %s", chat_id, out_name) 
     # ── Status message ────────────────────────────────────────────────────────
     status = await message.reply_text("⏳ Starting…")
 
