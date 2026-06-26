@@ -190,23 +190,7 @@ async def handle_media(client: Client, message: Message):
             progress=up_reporter.update,
         )
 
-        if message.video or (
-            message.document
-            and (message.document.mime_type or "").startswith("video/")
-        ):
-            await client.send_video(
-                **send_kwargs,
-                video=out_full,
-                supports_streaming=True,
-            )
-        elif message.audio or (
-            message.document
-            and (message.document.mime_type or "").startswith("audio/")
-        ):
-            await client.send_audio(**send_kwargs, audio=out_full)
-        else:
-            # Generic document
-            await client.send_document(**send_kwargs, document=out_full)
+        await client.send_document(**send_kwargs, document=out_full)
 
         await status.delete()
 
