@@ -119,7 +119,8 @@ async def handle_media(client: Client, message: Message):
         pf = parse_filename(raw_name)
         out_name = _sanitise(build_output_name(pf, state.fmt))
 
-    logger.info("[%s] Output name: %s", chat_id, out_name)
+    logger.info("DEBUG_OUT_NAME: %s", out_name)
+    logger.info("DEBUG_RAW_NAME: %s", raw_name)
 
     status = await message.reply_text("⏳ Starting…")
 
