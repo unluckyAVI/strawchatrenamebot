@@ -1,11 +1,6 @@
 """
 Media handler — core pipeline.
-1. Receive document / video / audio
-2. Download with progress
-3. Parse filename → apply format (or override)
-4. Run FFmpeg to embed metadata (-c copy)
-5. Upload with progress as DOCUMENT always
-6. Caption = filename only
+Always sends as document. Filename = caption = renamed output.
 """
 
 from __future__ import annotations
@@ -28,8 +23,6 @@ from state import state_manager
 logger = logging.getLogger(__name__)
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
-
 def _get_media(message: Message):
     return message.document or message.video or message.audio
 
@@ -47,47 +40,45 @@ def _get_file_name(message: Message) -> str:
         "video/webm": ".webm", "audio/mpeg": ".mp3",
         "audio/x-flac": ".flac", "audio/ogg": ".ogg",
     }
-    ext = ext_map.get(mime, "")
-    return f"media_{media.file_id[-8:]}{ext}"
+    return f"media_{media.file_id[-8:]}{ext_map.get(mime, '')}"
 
 
 def _sanitise(name: str) -> str:
-    """Remove filesystem-unsafe characters."""
     return re.sub(r'[<>:"/\\|?*]', "", name).strip()
 
 
 def _tmp_path(suffix: str = "") -> str:
-    uid = uuid.uuid4().hex
-    return os.path.join(Config.DOWNLOAD_DIR, f"{uid}{suffix}")
+    return os.path.join(Config.DOWNLOAD_DIR, f"{uuid.uuid4().hex}{suffix}")
 
 
-def _final_path(out_name: str) -> str:
-    """Return the full output path using the clean output name."""
-    safe = _sanitise(out_name)
-    return os.path.join(Config.OUTPUT_DIR, safe)
+def _cleanup(*paths: str):
+    for p in paths:
+        if p and os.path.isfile(p):
+            try:
+                os.remove(p)
+            except OSError:
+                pass
 
 
-# ── Photo handler (for /thumbnail flow) ──────────────────────────────────────
+# ── Photo handler ─────────────────────────────────────────────────────────────
 
 @Client.on_message(filters.private & filters.photo)
 async def handle_photo(client: Client, message: Message):
     state = state_manager.get(message.chat.id)
     if not state.awaiting_thumbnail:
         return
-
     state.awaiting_thumbnail = False
     status = await message.reply_text("⏬ Downloading thumbnail…")
-
     try:
         thumb_path = os.path.join(Config.THUMB_DIR, f"thumb_{message.chat.id}.jpg")
         await client.download_media(message, file_name=thumb_path)
         state_manager.set_thumbnail(message.chat.id, thumb_path)
-        await status.edit_text("✅ Thumbnail saved! It will be used for all future files.")
+        await status.edit_text("✅ Thumbnail saved!")
     except Exception as e:
-        await status.edit_text(f"❌ Failed to save thumbnail: {e}")
+        await status.edit_text(f"❌ Failed: {e}")
 
 
-# ── Text handler (for /rename flow) ──────────────────────────────────────────
+# ── Text handler ──────────────────────────────────────────────────────────────
 
 @Client.on_message(filters.private & filters.text & ~filters.command(
     ["start", "help", "metadata", "tokens", "format",
@@ -98,122 +89,107 @@ async def handle_text(client: Client, message: Message):
     state = state_manager.get(message.chat.id)
     if not state.awaiting_rename:
         return
-
     state.awaiting_rename = False
     custom_name = message.text.strip()
     state_manager.set_rename_override(message.chat.id, custom_name)
-    await message.reply_text(
-        f"✅ Custom name set: `{custom_name}`\n"
-        "Now send me the file and I'll use this name."
-    )
+    await message.reply_text(f"✅ Custom name set: `{custom_name}`\nNow send me the file.")
 
 
 # ── Main media handler ────────────────────────────────────────────────────────
 
 @Client.on_message(
-    filters.private
-    & (filters.document | filters.video | filters.audio)
+    filters.private & (filters.document | filters.video | filters.audio)
 )
 async def handle_media(client: Client, message: Message):
     chat_id = message.chat.id
     state = state_manager.get(chat_id)
     media = _get_media(message)
-
     if not media:
         return
 
     raw_name = _get_file_name(message)
     logger.info("[%s] Received: %s", chat_id, raw_name)
-    
-    # ── Determine output filename ─────────────────────────────────────────────
+
+    # ── Build output name ─────────────────────────────────────────────────────
     custom = state_manager.consume_rename_override(chat_id)
     if custom:
         out_name = _sanitise(custom)
     else:
         pf = parse_filename(raw_name)
-        out_name = build_output_name(pf, state.fmt)
-        out_name = _sanitise(out_name)
-    logger.info("[%s] out_name = %s", chat_id, out_name) 
-    # ── Status message ────────────────────────────────────────────────────────
+        out_name = _sanitise(build_output_name(pf, state.fmt))
+
+    logger.info("[%s] Output name: %s", chat_id, out_name)
+
     status = await message.reply_text("⏳ Starting…")
 
-    # ── Download to temp path ─────────────────────────────────────────────────
-    ext = Path(raw_name).suffix or ""
-    dl_path = _tmp_path(ext)
+    # ── Download ──────────────────────────────────────────────────────────────
+    dl_path = _tmp_path(Path(raw_name).suffix or "")
     try:
         await status.edit_text(f"⏬ **Downloading…**\n`{raw_name}`")
         dl_reporter = ProgressReporter(status, "⏬ Downloading", raw_name)
         dl_path = await client.download_media(
-            message,
-            file_name=dl_path,
-            progress=dl_reporter.update,
+            message, file_name=dl_path, progress=dl_reporter.update,
         )
     except Exception as e:
         logger.exception("Download failed")
         await status.edit_text(f"❌ Download failed: {e}")
         return
 
-    # ── FFmpeg: embed metadata → write directly to final named path ───────────
-    out_full = _final_path(out_name)
+    # ── FFmpeg ────────────────────────────────────────────────────────────────
+    # Write output directly to a temp path first
+    ffmpeg_out = _tmp_path(Path(out_name).suffix or ".mkv")
     try:
         await status.edit_text(f"⚙️ **Embedding metadata…**\n`{out_name}`")
         await embed_metadata(
-            dl_path, out_full,
+            dl_path, ffmpeg_out,
             thumbnail_path=state.thumbnail,
             meta_overrides=state.custom_meta,
         )
     except Exception as e:
         logger.exception("FFmpeg failed")
         await status.edit_text(f"❌ FFmpeg error: {e}")
-        _cleanup(dl_path, out_full)
+        _cleanup(dl_path, ffmpeg_out)
         return
     finally:
         _cleanup(dl_path)
 
-    # ── Thumbnail for upload ──────────────────────────────────────────────────
+    # ── Rename to final correct name ──────────────────────────────────────────
+    final_path = os.path.join(Config.OUTPUT_DIR, out_name)
+    try:
+        os.rename(ffmpeg_out, final_path)
+        logger.info("[%s] Renamed to: %s", chat_id, final_path)
+    except Exception as e:
+        logger.warning("Rename failed: %s", e)
+        final_path = ffmpeg_out  # fallback to temp path
+
+    # ── Thumbnail ─────────────────────────────────────────────────────────────
     thumb_for_upload: Optional[str] = None
     if state.thumbnail and os.path.isfile(state.thumbnail):
         thumb_for_upload = state.thumbnail
     else:
         auto_thumb = _tmp_path(".jpg")
-        if await extract_thumbnail(out_full, auto_thumb):
+        if await extract_thumbnail(final_path, auto_thumb):
             thumb_for_upload = auto_thumb
-# ── Rename file on disk to exactly match out_name ────────────────────────
-    renamed_path = os.path.join(Config.OUTPUT_DIR, out_name)
-    try:
-        os.rename(out_full, renamed_path)
-        out_full = renamed_path
-    except Exception:
-        pass
-    # ── Upload as DOCUMENT always ─────────────────────────────────────────────
+
+    # ── Upload as document ────────────────────────────────────────────────────
     try:
         await status.edit_text(f"⏫ **Uploading…**\n`{out_name}`")
         up_reporter = ProgressReporter(status, "⏫ Uploading", out_name)
 
         await client.send_document(
             chat_id=chat_id,
-            document=out_full,
-            file_name=out_name,       # ← exact filename Telegram will show
-            caption=out_name,         # ← caption = filename only
+            document=final_path,
+            file_name=out_name,
+            caption=out_name,
             thumb=thumb_for_upload,
             progress=up_reporter.update,
         )
-
         await status.delete()
 
     except Exception as e:
         logger.exception("Upload failed")
         await status.edit_text(f"❌ Upload failed: {e}")
     finally:
-        _cleanup(out_full)
+        _cleanup(final_path)
         if thumb_for_upload and thumb_for_upload != state.thumbnail:
             _cleanup(thumb_for_upload)
-
-
-def _cleanup(*paths: str):
-    for p in paths:
-        if p and os.path.isfile(p):
-            try:
-                os.remove(p)
-            except OSError:
-                pass
