@@ -15,7 +15,7 @@ class Config:
     API_ID: int = int(os.environ.get("TELEGRAM_API_ID", 0))
     API_HASH: str = os.environ.get("TELEGRAM_API_HASH", "")
     BOT_TOKEN: str = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-    MONGO_URI: str = os.environ.get("MONGO_URI", "")
+    MONGO_URI: str = os.environ.get("MONGO_URI", "") or os.environ.get("MONGO", "")
 
     # Branding
     CHANNEL_TAG: str = "@StraWchatOfficial"
