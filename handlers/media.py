@@ -178,7 +178,13 @@ async def handle_media(client: Client, message: Message):
         auto_thumb = _tmp_path(".jpg")
         if await extract_thumbnail(out_full, auto_thumb):
             thumb_for_upload = auto_thumb
-
+# ── Rename file on disk to exactly match out_name ────────────────────────
+    renamed_path = os.path.join(Config.OUTPUT_DIR, out_name)
+    try:
+        os.rename(out_full, renamed_path)
+        out_full = renamed_path
+    except Exception:
+        pass
     # ── Upload as DOCUMENT always ─────────────────────────────────────────────
     try:
         await status.edit_text(f"⏫ **Uploading…**\n`{out_name}`")
