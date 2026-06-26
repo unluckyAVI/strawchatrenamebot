@@ -123,8 +123,9 @@ async def handle_media(client: Client, message: Message):
 
     status = await message.reply_text("⏳ Starting…")
 
-    # ── Download ──────────────────────────────────────────────────────────────
-    dl_path = _tmp_path(Path(raw_name).suffix or "")
+    
+    # ── Download directly with correct output name ────────────────────────────
+    dl_path = os.path.join(Config.DOWNLOAD_DIR, out_name)
     try:
         await status.edit_text(f"⏬ **Downloading…**\n`{raw_name}`")
         dl_reporter = ProgressReporter(status, "⏬ Downloading", raw_name)
@@ -137,7 +138,7 @@ async def handle_media(client: Client, message: Message):
         return
 
     # ── FFmpeg ────────────────────────────────────────────────────────────────
-    ffmpeg_out = _tmp_path(Path(out_name).suffix or ".mkv")
+    ffmpeg_out = os.path.join(Config.OUTPUT_DIR, out_name)
     try:
         await status.edit_text(f"⚙️ **Embedding metadata…**\n`{out_name}`")
         await embed_metadata(
