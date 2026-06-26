@@ -1,6 +1,6 @@
 """
 Media handler — core pipeline.
-Sends file as BytesIO with .name set to force correct filename.
+Always sends as document. Filename = caption = renamed output.
 """
 
 from __future__ import annotations
@@ -8,9 +8,6 @@ import os
 import re
 import uuid
 import logging
-import io
-import pyrogram
-
 from pathlib import Path
 from typing import Optional
 
@@ -121,8 +118,7 @@ async def handle_media(client: Client, message: Message):
         pf = parse_filename(raw_name)
         out_name = _sanitise(build_output_name(pf, state.fmt))
 
-    logger.info("DEBUG_OUT_NAME: %s", out_name)
-    logger.info("DEBUG_RAW_NAME: %s", raw_name)
+    logger.info("[%s] Output name: %s", chat_id, out_name)
 
     status = await message.reply_text("⏳ Starting…")
 
@@ -140,6 +136,7 @@ async def handle_media(client: Client, message: Message):
         return
 
     # ── FFmpeg ────────────────────────────────────────────────────────────────
+    # Write output directly to a temp path first
     ffmpeg_out = _tmp_path(Path(out_name).suffix or ".mkv")
     try:
         await status.edit_text(f"⚙️ **Embedding metadata…**\n`{out_name}`")
@@ -156,36 +153,36 @@ async def handle_media(client: Client, message: Message):
     finally:
         _cleanup(dl_path)
 
+    # ── Rename to final correct name ──────────────────────────────────────────
+    final_path = os.path.join(Config.OUTPUT_DIR, out_name)
+    try:
+        os.rename(ffmpeg_out, final_path)
+        logger.info("[%s] Renamed to: %s", chat_id, final_path)
+    except Exception as e:
+        logger.warning("Rename failed: %s", e)
+        final_path = ffmpeg_out  # fallback to temp path
+
     # ── Thumbnail ─────────────────────────────────────────────────────────────
     thumb_for_upload: Optional[str] = None
     if state.thumbnail and os.path.isfile(state.thumbnail):
         thumb_for_upload = state.thumbnail
     else:
         auto_thumb = _tmp_path(".jpg")
-        if await extract_thumbnail(ffmpeg_out, auto_thumb):
+        if await extract_thumbnail(final_path, auto_thumb):
             thumb_for_upload = auto_thumb
 
-    # ── Upload ────────────────────────────────────────────────────────────────
+    # ── Upload as document ────────────────────────────────────────────────────
     try:
         await status.edit_text(f"⏫ **Uploading…**\n`{out_name}`")
         up_reporter = ProgressReporter(status, "⏫ Uploading", out_name)
 
-        
-        logger.info("DEBUG_PYROGRAM_VERSION: %s", pyrogram.__version__)
-
-        # Read file into memory and set .name to our desired filename
-        with open(ffmpeg_out, "rb") as f:
-            buf = io.BytesIO(f.read())
-        buf.name = out_name
-        logger.info("DEBUG_BYTESIO_NAME: %s", buf.name)
-
         await client.send_document(
             chat_id=chat_id,
-            document=buf,
+            document=final_path,
+            file_name=out_name,
             caption=out_name,
             thumb=thumb_for_upload,
             progress=up_reporter.update,
-            force_document=True,
         )
         await status.delete()
 
@@ -193,6 +190,6 @@ async def handle_media(client: Client, message: Message):
         logger.exception("Upload failed")
         await status.edit_text(f"❌ Upload failed: {e}")
     finally:
-        _cleanup(ffmpeg_out)
+        _cleanup(final_path)
         if thumb_for_upload and thumb_for_upload != state.thumbnail:
             _cleanup(thumb_for_upload)
