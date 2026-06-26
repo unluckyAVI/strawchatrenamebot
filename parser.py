@@ -14,8 +14,8 @@ from typing import Optional
 
 # Season + Episode — ordered from most specific to least
 _SE_PATTERNS = [
-    # S01E05 / S01-E05 / S1E5
-    (re.compile(r'[Ss](\d{1,2})[.\-_ ]*[Ee](\d{1,3})'), True),
+    # S01E05 / S01-E05 / S1E5 (require word boundary after episode number)
+    (re.compile(r'[Ss](\d{1,2})[.\-_ ]*[Ee](\d{1,3})(?!\d)'), True),
     # S01 Ep05 / S01 EP05
     (re.compile(r'[Ss](\d{1,2})[.\- ]+[Ee][Pp]?(\d{1,3})'), True),
     # Season 1 Episode 5
@@ -66,7 +66,7 @@ _STRIP_TOKENS = re.compile(
     (?:
       \[.*?\]|\(.*?\)                             # anything in brackets/parens
       |-[A-Z][A-Z0-9]{1,10}(?=\b|\Z)             # release group e.g. -GROUP
-      |@\S+                                       # @username tags
+      |@[A-Za-z0-9_.]+                             # @username tags like @Anime_Web_36
       |\b(?:
         4K|2160p|1080p|720p|480p|360p
         |HDRip|BRRip|BluRay|Blu-Ray|WEB-DL|WEBRip|WEB|HDTV
@@ -140,6 +140,17 @@ def parse_filename(raw: str) -> ParsedFile:
     else:
         name = raw
 
+
+    # 1a. Pre-process: remove @username tags first (before quality detection)
+    name = re.sub(r'@[A-Za-z0-9_.]+', ' ', name)
+
+    # 1b. Pre-process: insert space before quality tokens glued to digits
+    # e.g. 'E06480p' -> 'E06 480p'
+    name = re.sub(r'(\d)(4K|2160p|1080p|720p|480p|360p|HDRip|BRRip|BluRay|WEB-DL|WEBRip|HDTV|DVDRip)', r'\1 \2', name, flags=re.IGNORECASE)
+    name = re.sub(r'(4K|2160p|1080p|720p|480p|360p|HDRip|BRRip|BluRay|WEB-DL|WEBRip|HDTV|DVDRip)([A-Za-z])', r'\1 \2', name, flags=re.IGNORECASE)
+    # Normalize underscores between words to spaces
+    name = re.sub(r'(?<=[A-Za-z0-9])_(?=[A-Za-z0-9])', ' ', name)
+
     # 2. Quality
     mq = _RE_QUALITY.search(name)
     if mq:
@@ -194,6 +205,8 @@ def parse_filename(raw: str) -> ParsedFile:
     title = _RE_SEP.sub(" ", title)
     # Remove leftover dashes/underscores
     title = re.sub(r'\s*-\s*', ' ', title)
+    # Remove leftover numbers at end of title (e.g. from @Anime_Web_36 → '36')
+    title = re.sub(r'\s+\d{1,3}$', '', title)
     title = re.sub(r'\s{2,}', ' ', title).strip()
     pf.title = _smart_title(title)
 
