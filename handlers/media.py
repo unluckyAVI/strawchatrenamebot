@@ -9,6 +9,8 @@ import re
 import uuid
 import logging
 import io
+import pyrogram
+logger.info("DEBUG_PYROGRAM_VERSION: %s", pyrogram.__version__)
 from pathlib import Path
 from typing import Optional
 
@@ -163,20 +165,23 @@ async def handle_media(client: Client, message: Message):
         if await extract_thumbnail(ffmpeg_out, auto_thumb):
             thumb_for_upload = auto_thumb
 
-    # ── Upload as BytesIO with correct .name set ──────────────────────────────
-    # This is the most reliable way to force Pyrogram to use our filename
+    # ── Upload ────────────────────────────────────────────────────────────────
     try:
         await status.edit_text(f"⏫ **Uploading…**\n`{out_name}`")
         up_reporter = ProgressReporter(status, "⏫ Uploading", out_name)
 
+        import pyrogram
+        logger.info("DEBUG_PYROGRAM_VERSION: %s", pyrogram.__version__)
+
         # Read file into memory and set .name to our desired filename
         with open(ffmpeg_out, "rb") as f:
-            file_bytes = io.BytesIO(f.read())
-        file_bytes.name = out_name  # ← Pyrogram reads .name from BytesIO!
+            buf = io.BytesIO(f.read())
+        buf.name = out_name
+        logger.info("DEBUG_BYTESIO_NAME: %s", buf.name)
 
         await client.send_document(
             chat_id=chat_id,
-            document=file_bytes,
+            document=buf,
             caption=out_name,
             thumb=thumb_for_upload,
             progress=up_reporter.update,
