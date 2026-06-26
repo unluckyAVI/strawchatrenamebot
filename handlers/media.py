@@ -175,7 +175,15 @@ async def handle_media(client: Client, message: Message):
         ok = await extract_thumbnail(out_full, auto_thumb)
         if ok:
             thumb_for_upload = auto_thumb
-
+# ── Rename file on disk to correct name ──────────────────────────
+    import re as _re
+    safe_name = _re.sub(r'[<>:"/\\|?*]', '', out_name)
+    final_path = os.path.join(Config.OUTPUT_DIR, safe_name)
+    try:
+        os.rename(out_full, final_path)
+        out_full = final_path
+    except Exception:
+        pass
     # ── Upload ────────────────────────────────────────────────────────────────
     try:
         up_reporter = ProgressReporter(status, "⏫ Uploading", out_name)
