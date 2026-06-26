@@ -8,6 +8,7 @@ import os
 import re
 import uuid
 import logging
+import shutil
 from pathlib import Path
 from typing import Optional
 
@@ -136,7 +137,6 @@ async def handle_media(client: Client, message: Message):
         return
 
     # ── FFmpeg ────────────────────────────────────────────────────────────────
-    # Write output directly to a temp path first
     ffmpeg_out = _tmp_path(Path(out_name).suffix or ".mkv")
     try:
         await status.edit_text(f"⚙️ **Embedding metadata…**\n`{out_name}`")
@@ -153,14 +153,16 @@ async def handle_media(client: Client, message: Message):
     finally:
         _cleanup(dl_path)
 
-    # ── Rename to final correct name ──────────────────────────────────────────
+    # ── Copy to final path with correct name ──────────────────────────────────
+    # Use shutil.copy2 instead of os.rename to avoid cross-device issues
     final_path = os.path.join(Config.OUTPUT_DIR, out_name)
     try:
-        os.rename(ffmpeg_out, final_path)
-        logger.info("[%s] Renamed to: %s", chat_id, final_path)
+        shutil.copy2(ffmpeg_out, final_path)
+        _cleanup(ffmpeg_out)
+        logger.info("[%s] Final file: %s", chat_id, final_path)
     except Exception as e:
-        logger.warning("Rename failed: %s", e)
-        final_path = ffmpeg_out  # fallback to temp path
+        logger.warning("[%s] Copy failed: %s, using temp path", chat_id, e)
+        final_path = ffmpeg_out
 
     # ── Thumbnail ─────────────────────────────────────────────────────────────
     thumb_for_upload: Optional[str] = None
@@ -171,11 +173,13 @@ async def handle_media(client: Client, message: Message):
         if await extract_thumbnail(final_path, auto_thumb):
             thumb_for_upload = auto_thumb
 
-    # ── Upload as document ────────────────────────────────────────────────────
+    # ── Upload ────────────────────────────────────────────────────────────────
     try:
         await status.edit_text(f"⏫ **Uploading…**\n`{out_name}`")
         up_reporter = ProgressReporter(status, "⏫ Uploading", out_name)
 
+        # Force Pyrogram to use our filename by opening the file with the
+        # correct name — pass the path directly so OS filename is used
         await client.send_document(
             chat_id=chat_id,
             document=final_path,
@@ -183,6 +187,7 @@ async def handle_media(client: Client, message: Message):
             caption=out_name,
             thumb=thumb_for_upload,
             progress=up_reporter.update,
+            force_document=True,
         )
         await status.delete()
 
