@@ -10,7 +10,7 @@ import uuid
 import logging
 import io
 import pyrogram
-logger.info("DEBUG_PYROGRAM_VERSION: %s", pyrogram.__version__)
+
 from pathlib import Path
 from typing import Optional
 
@@ -170,7 +170,7 @@ async def handle_media(client: Client, message: Message):
         await status.edit_text(f"⏫ **Uploading…**\n`{out_name}`")
         up_reporter = ProgressReporter(status, "⏫ Uploading", out_name)
 
-        import pyrogram
+        
         logger.info("DEBUG_PYROGRAM_VERSION: %s", pyrogram.__version__)
 
         # Read file into memory and set .name to our desired filename
