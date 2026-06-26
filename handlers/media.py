@@ -1,6 +1,6 @@
 """
 Media handler — core pipeline.
-Always sends as document. Filename = caption = renamed output.
+Sends file as BytesIO with .name set to force correct filename.
 """
 
 from __future__ import annotations
@@ -8,7 +8,7 @@ import os
 import re
 import uuid
 import logging
-import shutil
+import io
 from pathlib import Path
 from typing import Optional
 
@@ -123,9 +123,8 @@ async def handle_media(client: Client, message: Message):
 
     status = await message.reply_text("⏳ Starting…")
 
-    
-    # ── Download directly with correct output name ────────────────────────────
-    dl_path = os.path.join(Config.DOWNLOAD_DIR, out_name)
+    # ── Download ──────────────────────────────────────────────────────────────
+    dl_path = _tmp_path(Path(raw_name).suffix or "")
     try:
         await status.edit_text(f"⏬ **Downloading…**\n`{raw_name}`")
         dl_reporter = ProgressReporter(status, "⏬ Downloading", raw_name)
@@ -138,7 +137,7 @@ async def handle_media(client: Client, message: Message):
         return
 
     # ── FFmpeg ────────────────────────────────────────────────────────────────
-    ffmpeg_out = os.path.join(Config.OUTPUT_DIR, out_name)
+    ffmpeg_out = _tmp_path(Path(out_name).suffix or ".mkv")
     try:
         await status.edit_text(f"⚙️ **Embedding metadata…**\n`{out_name}`")
         await embed_metadata(
@@ -154,37 +153,29 @@ async def handle_media(client: Client, message: Message):
     finally:
         _cleanup(dl_path)
 
-    # ── Copy to final path with correct name ──────────────────────────────────
-    # Use shutil.copy2 instead of os.rename to avoid cross-device issues
-    final_path = os.path.join(Config.OUTPUT_DIR, out_name)
-    try:
-        shutil.copy2(ffmpeg_out, final_path)
-        _cleanup(ffmpeg_out)
-        logger.info("[%s] Final file: %s", chat_id, final_path)
-    except Exception as e:
-        logger.warning("[%s] Copy failed: %s, using temp path", chat_id, e)
-        final_path = ffmpeg_out
-
     # ── Thumbnail ─────────────────────────────────────────────────────────────
     thumb_for_upload: Optional[str] = None
     if state.thumbnail and os.path.isfile(state.thumbnail):
         thumb_for_upload = state.thumbnail
     else:
         auto_thumb = _tmp_path(".jpg")
-        if await extract_thumbnail(final_path, auto_thumb):
+        if await extract_thumbnail(ffmpeg_out, auto_thumb):
             thumb_for_upload = auto_thumb
 
-    # ── Upload ────────────────────────────────────────────────────────────────
+    # ── Upload as BytesIO with correct .name set ──────────────────────────────
+    # This is the most reliable way to force Pyrogram to use our filename
     try:
         await status.edit_text(f"⏫ **Uploading…**\n`{out_name}`")
         up_reporter = ProgressReporter(status, "⏫ Uploading", out_name)
 
-        # Force Pyrogram to use our filename by opening the file with the
-        # correct name — pass the path directly so OS filename is used
+        # Read file into memory and set .name to our desired filename
+        with open(ffmpeg_out, "rb") as f:
+            file_bytes = io.BytesIO(f.read())
+        file_bytes.name = out_name  # ← Pyrogram reads .name from BytesIO!
+
         await client.send_document(
             chat_id=chat_id,
-            document=final_path,
-            file_name=out_name,
+            document=file_bytes,
             caption=out_name,
             thumb=thumb_for_upload,
             progress=up_reporter.update,
@@ -196,6 +187,6 @@ async def handle_media(client: Client, message: Message):
         logger.exception("Upload failed")
         await status.edit_text(f"❌ Upload failed: {e}")
     finally:
-        _cleanup(final_path)
+        _cleanup(ffmpeg_out)
         if thumb_for_upload and thumb_for_upload != state.thumbnail:
             _cleanup(thumb_for_upload)
