@@ -1,6 +1,6 @@
 """
 Media handler — core pipeline.
-Always sends as document. Filename = caption = renamed output.
+Sends file as BytesIO with .name set to force correct filename.
 """
 
 from __future__ import annotations
@@ -8,6 +8,7 @@ import os
 import re
 import uuid
 import logging
+import io
 from pathlib import Path
 from typing import Optional
 
@@ -136,7 +137,6 @@ async def handle_media(client: Client, message: Message):
         return
 
     # ── FFmpeg ────────────────────────────────────────────────────────────────
-    # Write output directly to a temp path first
     ffmpeg_out = _tmp_path(Path(out_name).suffix or ".mkv")
     try:
         await status.edit_text(f"⚙️ **Embedding metadata…**\n`{out_name}`")
@@ -153,36 +153,34 @@ async def handle_media(client: Client, message: Message):
     finally:
         _cleanup(dl_path)
 
-    # ── Rename to final correct name ──────────────────────────────────────────
-    final_path = os.path.join(Config.OUTPUT_DIR, out_name)
-    try:
-        os.rename(ffmpeg_out, final_path)
-        logger.info("[%s] Renamed to: %s", chat_id, final_path)
-    except Exception as e:
-        logger.warning("Rename failed: %s", e)
-        final_path = ffmpeg_out  # fallback to temp path
-
     # ── Thumbnail ─────────────────────────────────────────────────────────────
     thumb_for_upload: Optional[str] = None
     if state.thumbnail and os.path.isfile(state.thumbnail):
         thumb_for_upload = state.thumbnail
     else:
         auto_thumb = _tmp_path(".jpg")
-        if await extract_thumbnail(final_path, auto_thumb):
+        if await extract_thumbnail(ffmpeg_out, auto_thumb):
             thumb_for_upload = auto_thumb
 
-    # ── Upload as document ────────────────────────────────────────────────────
+    # ── Upload as BytesIO with correct .name set ──────────────────────────────
+    # This is the most reliable way to force Pyrogram to use our filename
     try:
         await status.edit_text(f"⏫ **Uploading…**\n`{out_name}`")
         up_reporter = ProgressReporter(status, "⏫ Uploading", out_name)
 
+        # Read file into memory — add null byte to force Telegram to treat
+        # this as a brand new file (not a cached forwarded file)
+        with open(ffmpeg_out, "rb") as f:
+            file_bytes = io.BytesIO(f.read() + b'\x00')
+        file_bytes.name = out_name  # ← Pyrogram reads .name from BytesIO!
+
         await client.send_document(
             chat_id=chat_id,
-            document=final_path,
-            file_name=out_name,
+            document=file_bytes,
             caption=out_name,
             thumb=thumb_for_upload,
             progress=up_reporter.update,
+            force_document=True,
         )
         await status.delete()
 
@@ -190,6 +188,6 @@ async def handle_media(client: Client, message: Message):
         logger.exception("Upload failed")
         await status.edit_text(f"❌ Upload failed: {e}")
     finally:
-        _cleanup(final_path)
+        _cleanup(ffmpeg_out)
         if thumb_for_upload and thumb_for_upload != state.thumbnail:
             _cleanup(thumb_for_upload)
