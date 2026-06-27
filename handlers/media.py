@@ -146,12 +146,18 @@ async def handle_media(client: Client, message: Message):
     final_path = os.path.join(Config.OUTPUT_DIR, out_name)
 
     try:
-        await status.edit_text(f"⚙️ **Embedding metadata…**\n`{out_name}`")
-        await embed_metadata(
-            dl_path, final_path,
-            thumbnail_path=state.thumbnail,
-            meta_overrides=state.custom_meta,
-        )
+        if state.metadata_enabled:
+            await status.edit_text(f"⚙️ **Embedding metadata…**\n`{out_name}`")
+            await embed_metadata(
+                dl_path, final_path,
+                thumbnail_path=state.thumbnail,
+                meta_overrides=state.custom_meta,
+            )
+        else:
+            # Metadata embedding off — just move the downloaded file to its
+            # correctly-named final path, no ffmpeg pass needed.
+            os.makedirs(os.path.dirname(final_path), exist_ok=True)
+            os.replace(dl_path, final_path)
     except Exception as e:
         logger.exception("FFmpeg failed")
         await status.edit_text(f"❌ FFmpeg error: {e}")
