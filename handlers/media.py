@@ -109,8 +109,20 @@ async def handle_media(client: Client, message: Message):
     media = _get_media(message)
     if not media:
         return
+# ── Strip forward info for fresh file_id ─────────────────────────────────
+    if message.forward_date:
+        try:
+            copied = await client.copy_message(
+                chat_id="me",
+                from_chat_id=chat_id,
+                message_id=message.id,
+            )
+            message = copied
+        except Exception as e:
+            logger.warning("Could not copy message: %s", e)
 
     raw_name = _get_file_name(message)
+
     logger.info("[%s] Received: %s", chat_id, raw_name)
 
     # ── Build output name ─────────────────────────────────────────────────────
