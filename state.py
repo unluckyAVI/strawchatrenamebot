@@ -28,6 +28,7 @@ class ChatState:
         self.awaiting_thumbnail: bool = False
         self.awaiting_rename: bool = False
         self.custom_meta: dict = {}   # customizable metadata fields
+        self.metadata_enabled: bool = True   # on/off toggle for metadata embedding
 
 
 class StateManager:
@@ -44,6 +45,7 @@ class StateManager:
                         state.fmt = doc.get("fmt", Config.DEFAULT_FORMAT)
                         state.thumbnail = doc.get("thumbnail", None)
                         state.custom_meta = doc.get("custom_meta", {})
+                        state.metadata_enabled = doc.get("metadata_enabled", True)
                 except Exception:
                     pass
             self._cache[chat_id] = state
@@ -62,6 +64,7 @@ class StateManager:
                     "fmt": state.fmt,
                     "thumbnail": state.thumbnail,
                     "custom_meta": state.custom_meta,
+                    "metadata_enabled": state.metadata_enabled,
                 }},
                 upsert=True,
             )
@@ -86,6 +89,10 @@ class StateManager:
 
     def set_rename_override(self, chat_id: int, name: str):
         self.get(chat_id).rename_override = name
+
+    def set_metadata_enabled(self, chat_id: int, enabled: bool):
+        self.get(chat_id).metadata_enabled = enabled
+        self._save(chat_id)
 
     def consume_rename_override(self, chat_id: int) -> Optional[str]:
         state = self.get(chat_id)
