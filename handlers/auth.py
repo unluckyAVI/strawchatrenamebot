@@ -26,17 +26,15 @@ def is_admin(user_id: int) -> bool:
 
 @Client.on_message(
     filters.private
-    & ~filters.command(["start"])  # Allow /start for everyone
+    & ~filters.command(["start"])
 )
 async def auth_gate(client: Client, message: Message):
-    """
-    Block all non-admin users.
-    This handler runs BEFORE all others (group -1).
-    """
-    if not is_admin(message.from_user.id):
-        await message.reply_text(
-            "🔒 **This bot is private.**\n\n"
-            "Only authorized users can use this bot.\n"
-            f"Contact the owner to get access."
-        )
-        message.stop_propagation()
+    if is_admin(message.from_user.id):
+        return  # ← Allow admins through immediately!
+    
+    await message.reply_text(
+        "🔒 **This bot is private.**\n\n"
+        "Only authorized users can use this bot.\n"
+        "Contact the owner to get access."
+    )
+    message.stop_propagation()
