@@ -13,7 +13,7 @@ _RE_EXT = re.compile(r'\.(mkv|mp4|avi|mov|wmv|flv|webm|m4v|ts|m2ts|mp3|flac|aac|
 
 # ── Quality patterns ──────────────────────────────────────────────────────────
 _QUALITY_MAP = {
-    r'4k|2160p': '4K',
+    r'4k|2160p': 'HDrip',
     r'1080p': '1080p',
     r'720p': '720p',
     r'480p': '480p',
