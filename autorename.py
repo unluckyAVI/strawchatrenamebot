@@ -89,6 +89,10 @@ _SE_PATTERNS = [
     (re.compile(r'\[S(\d{1,2})\]\s*\[E?(\d{1,3})\]', re.IGNORECASE), True, 1, 2),
     # S01 EP05, S01 Ep05
     (re.compile(r'S(\d{1,2})\s+Ep?(\d{1,3})', re.IGNORECASE), True, 1, 2),
+    # S02 - 01 (season dash episode WITHOUT E prefix — very common in anime)
+    (re.compile(r'S(\d{1,2})\s*-\s*(\d{1,3})(?!\d)(?!\s*[Ee])'), True, 1, 2),
+    # S02 01 (season space episode no separator)
+    (re.compile(r'(?:^|\s)S(\d{1,2})\s+(\d{2,3})(?!\d)(?!\s*[Ee])'), True, 1, 2),
     # 1x05, 01x05
     (re.compile(r'(\d{1,2})[xX](\d{1,3})'), True, 1, 2),
     # Season 1 Episode 5
