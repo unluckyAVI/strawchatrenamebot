@@ -1,9 +1,11 @@
 """
 State manager with MongoDB persistence.
-Stores per-chat: format, thumbnail, rename override, custom metadata, awaiting states.
+Thumbnail is stored as base64 in MongoDB so it survives server restarts.
 """
 
 from __future__ import annotations
+import os
+import base64
 from typing import Optional
 from config import Config
 
@@ -23,12 +25,12 @@ except Exception as e:
 class ChatState:
     def __init__(self):
         self.fmt: str = Config.DEFAULT_FORMAT
-        self.thumbnail: Optional[str] = None
+        self.thumbnail: Optional[str] = None        # local path to thumb file
+        self.thumbnail_b64: Optional[str] = None    # base64 encoded thumb
         self.rename_override: Optional[str] = None
         self.awaiting_thumbnail: bool = False
         self.awaiting_rename: bool = False
-        self.custom_meta: dict = {}   # customizable metadata fields
-        self.metadata_enabled: bool = True   # on/off toggle for metadata embedding
+        self.custom_meta: dict = {}
 
 
 class StateManager:
@@ -43,11 +45,24 @@ class StateManager:
                     doc = _col.find_one({"_id": chat_id})
                     if doc:
                         state.fmt = doc.get("fmt", Config.DEFAULT_FORMAT)
-                        state.thumbnail = doc.get("thumbnail", None)
                         state.custom_meta = doc.get("custom_meta", {})
-                        state.metadata_enabled = doc.get("metadata_enabled", True)
-                except Exception:
-                    pass
+                        # Restore thumbnail from base64 if available
+                        thumb_b64 = doc.get("thumbnail_b64", None)
+                        if thumb_b64:
+                            state.thumbnail_b64 = thumb_b64
+                            # Write to disk for use
+                            thumb_path = os.path.join(
+                                Config.THUMB_DIR, f"thumb_{chat_id}.jpg"
+                            )
+                            try:
+                                with open(thumb_path, "wb") as f:
+                                    f.write(base64.b64decode(thumb_b64))
+                                state.thumbnail = thumb_path
+                                print(f"[STATE] Restored thumbnail for {chat_id}")
+                            except Exception as e:
+                                print(f"[STATE] Failed to restore thumbnail: {e}")
+                except Exception as e:
+                    print(f"[STATE] Load failed: {e}")
             self._cache[chat_id] = state
         return self._cache[chat_id]
 
@@ -62,9 +77,8 @@ class StateManager:
                 {"_id": chat_id},
                 {"$set": {
                     "fmt": state.fmt,
-                    "thumbnail": state.thumbnail,
+                    "thumbnail_b64": state.thumbnail_b64,
                     "custom_meta": state.custom_meta,
-                    "metadata_enabled": state.metadata_enabled,
                 }},
                 upsert=True,
             )
@@ -80,19 +94,26 @@ class StateManager:
         self._save(chat_id)
 
     def set_thumbnail(self, chat_id: int, path: str):
-        self.get(chat_id).thumbnail = path
+        """Save thumbnail path AND encode to base64 for MongoDB."""
+        state = self.get(chat_id)
+        state.thumbnail = path
+        # Encode to base64 for persistent storage
+        try:
+            with open(path, "rb") as f:
+                state.thumbnail_b64 = base64.b64encode(f.read()).decode()
+            print(f"[STATE] Thumbnail saved to MongoDB for {chat_id}")
+        except Exception as e:
+            print(f"[STATE] Failed to encode thumbnail: {e}")
         self._save(chat_id)
 
     def clear_thumbnail(self, chat_id: int):
-        self.get(chat_id).thumbnail = None
+        state = self.get(chat_id)
+        state.thumbnail = None
+        state.thumbnail_b64 = None
         self._save(chat_id)
 
     def set_rename_override(self, chat_id: int, name: str):
         self.get(chat_id).rename_override = name
-
-    def set_metadata_enabled(self, chat_id: int, enabled: bool):
-        self.get(chat_id).metadata_enabled = enabled
-        self._save(chat_id)
 
     def consume_rename_override(self, chat_id: int) -> Optional[str]:
         state = self.get(chat_id)
