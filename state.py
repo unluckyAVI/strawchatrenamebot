@@ -31,6 +31,7 @@ class ChatState:
         self.awaiting_thumbnail: bool = False
         self.awaiting_rename: bool = False
         self.custom_meta: dict = {}
+        self.metadata_enabled: bool = True  # backward compat
 
 
 class StateManager:
