@@ -1,6 +1,7 @@
 """
-Media handler — core pipeline.
-Downloads, processes with FFmpeg, saves with correct name, uploads as document.
+Media handler — concurrent pipeline.
+Each file is processed in its own independent async task.
+Multiple files can be processed simultaneously at full speed.
 """
 
 from __future__ import annotations
@@ -8,6 +9,8 @@ import os
 import re
 import uuid
 import logging
+import asyncio
+import io
 from pathlib import Path
 from typing import Optional
 
@@ -15,12 +18,17 @@ from pyrogram import Client, filters
 from pyrogram.types import Message
 
 from config import Config
+from autorename import build_filename
 from parser import parse_filename, build_output_name
 from ffmpeg_utils import embed_metadata, extract_thumbnail
 from progress import ProgressReporter
 from state import state_manager
+from handlers.auth import is_admin
 
 logger = logging.getLogger(__name__)
+
+# Track active tasks per chat so we can show queue position
+_active_tasks: dict[int, int] = {}
 
 
 def _get_media(message: Message):
@@ -44,7 +52,6 @@ def _get_file_name(message: Message) -> str:
 
 
 def _sanitise(name: str) -> str:
-    # Remove filesystem unsafe chars but keep spaces and brackets
     return re.sub(r'[<>:"/\\|?*]', "", name).strip()
 
 
@@ -65,6 +72,8 @@ def _cleanup(*paths: str):
 
 @Client.on_message(filters.private & filters.photo)
 async def handle_photo(client: Client, message: Message):
+    if not is_admin(message.from_user.id):
+        return
     state = state_manager.get(message.chat.id)
     if not state.awaiting_thumbnail:
         return
@@ -74,7 +83,7 @@ async def handle_photo(client: Client, message: Message):
         thumb_path = os.path.join(Config.THUMB_DIR, f"thumb_{message.chat.id}.jpg")
         await client.download_media(message, file_name=thumb_path)
         state_manager.set_thumbnail(message.chat.id, thumb_path)
-        await status.edit_text("✅ Thumbnail saved!")
+        await status.edit_text("✅ Thumbnail saved! Used for all future files.")
     except Exception as e:
         await status.edit_text(f"❌ Failed: {e}")
 
@@ -87,6 +96,8 @@ async def handle_photo(client: Client, message: Message):
      "thumbnail", "clearthumbnail", "rename", "setmeta", "resetmeta"]
 ))
 async def handle_text(client: Client, message: Message):
+    if not is_admin(message.from_user.id):
+        return
     state = state_manager.get(message.chat.id)
     if not state.awaiting_rename:
         return
@@ -98,46 +109,29 @@ async def handle_text(client: Client, message: Message):
     )
 
 
-# ── Main media handler ────────────────────────────────────────────────────────
+# ── Core processing function ──────────────────────────────────────────────────
 
-@Client.on_message(
-    filters.private & (filters.document | filters.video | filters.audio)
-)
-async def handle_media(client: Client, message: Message):
-    chat_id = message.chat.id
+async def _process_file(client: Client, message: Message, chat_id: int):
+    """
+    Full pipeline for one file.
+    Runs independently — multiple can run simultaneously.
+    """
     state = state_manager.get(chat_id)
-    media = _get_media(message)
-    if not media:
-        return
-# ── Strip forward info for fresh file_id ─────────────────────────────────
-    if message.forward_date:
-        try:
-            copied = await client.copy_message(
-                chat_id="me",
-                from_chat_id=chat_id,
-                message_id=message.id,
-            )
-            message = copied
-        except Exception as e:
-            logger.warning("Could not copy message: %s", e)
-
     raw_name = _get_file_name(message)
-
-    logger.info("[%s] Received: %s", chat_id, raw_name)
+    logger.info("[%s] Processing: %s", chat_id, raw_name)
 
     # ── Build output name ─────────────────────────────────────────────────────
     custom = state_manager.consume_rename_override(chat_id)
     if custom:
         out_name = _sanitise(custom)
     else:
-        pf = parse_filename(raw_name)
-        out_name = _sanitise(build_output_name(pf, state.fmt))
+        out_name = _sanitise(build_filename(raw_name, state.fmt))
 
-    logger.info("[%s] Output name: %s", chat_id, out_name)
+    logger.info("[%s] Output: %s", chat_id, out_name)
 
-    status = await message.reply_text("⏳ Starting…")
+    status = await message.reply_text(f"⏳ **Queued**\n`{out_name}`")
 
-    # ── Download to temp path ─────────────────────────────────────────────────
+    # ── Download ──────────────────────────────────────────────────────────────
     ext = Path(raw_name).suffix or ""
     dl_path = os.path.join(Config.DOWNLOAD_DIR, f"dl_{_uid()}{ext}")
     try:
@@ -151,25 +145,15 @@ async def handle_media(client: Client, message: Message):
         await status.edit_text(f"❌ Download failed: {e}")
         return
 
-    # ── FFmpeg — output directly to correctly named file ──────────────────────
-    # IMPORTANT: the output file IS named correctly on disk
-    # Pyrogram will use os.path.basename(file_path) as the filename
-    out_ext = Path(out_name).suffix or ext
-    final_path = os.path.join(Config.OUTPUT_DIR, out_name)
-
+    # ── FFmpeg ────────────────────────────────────────────────────────────────
+    final_path = os.path.join(Config.OUTPUT_DIR, f"{_uid()}_{out_name}")
     try:
-        if state.metadata_enabled:
-            await status.edit_text(f"⚙️ **Embedding metadata…**\n`{out_name}`")
-            await embed_metadata(
-                dl_path, final_path,
-                thumbnail_path=state.thumbnail,
-                meta_overrides=state.custom_meta,
-            )
-        else:
-            # Metadata embedding off — just move the downloaded file to its
-            # correctly-named final path, no ffmpeg pass needed.
-            os.makedirs(os.path.dirname(final_path), exist_ok=True)
-            os.replace(dl_path, final_path)
+        await status.edit_text(f"⚙️ **Processing…**\n`{out_name}`")
+        await embed_metadata(
+            dl_path, final_path,
+            thumbnail_path=state.thumbnail,
+            meta_overrides=state.custom_meta,
+        )
     except Exception as e:
         logger.exception("FFmpeg failed")
         await status.edit_text(f"❌ FFmpeg error: {e}")
@@ -177,9 +161,6 @@ async def handle_media(client: Client, message: Message):
         return
     finally:
         _cleanup(dl_path)
-
-    logger.info("[%s] Final file path: %s", chat_id, final_path)
-    logger.info("[%s] File exists: %s", chat_id, os.path.isfile(final_path))
 
     # ── Thumbnail ─────────────────────────────────────────────────────────────
     thumb_for_upload: Optional[str] = None
@@ -191,16 +172,17 @@ async def handle_media(client: Client, message: Message):
             thumb_for_upload = auto_thumb
 
     # ── Upload ────────────────────────────────────────────────────────────────
-    # Send final_path as string — Pyrogram uses os.path.basename(final_path)
-    # as the filename. Since final_path ends with out_name, this is correct.
     try:
         await status.edit_text(f"⏫ **Uploading…**\n`{out_name}`")
         up_reporter = ProgressReporter(status, "⏫ Uploading", out_name)
 
+        with open(final_path, "rb") as f:
+            buf = io.BytesIO(f.read())
+        buf.name = out_name
+
         await client.send_document(
             chat_id=chat_id,
-            document=final_path,          # file path — basename = out_name ✅
-            file_name=out_name,           # explicit override
+            document=buf,
             caption=out_name,
             thumb=thumb_for_upload,
             progress=up_reporter.update,
@@ -215,3 +197,21 @@ async def handle_media(client: Client, message: Message):
         _cleanup(final_path)
         if thumb_for_upload and thumb_for_upload != state.thumbnail:
             _cleanup(thumb_for_upload)
+
+
+# ── Main media handler ────────────────────────────────────────────────────────
+
+@Client.on_message(
+    filters.private & (filters.document | filters.video | filters.audio)
+)
+async def handle_media(client: Client, message: Message):
+    if not is_admin(message.from_user.id):
+        return
+
+    chat_id = message.chat.id
+
+    # Fire and forget — each file runs in its own independent task
+    # This allows multiple files to be processed simultaneously
+    asyncio.create_task(
+        _process_file(client, message, chat_id)
+    )

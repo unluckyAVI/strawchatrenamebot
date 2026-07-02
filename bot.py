@@ -1,6 +1,7 @@
 """
 StraWchat Rename Bot — Main entry point
 Telegram: @StraWchatOfficial
+Supports concurrent file processing.
 """
 
 import asyncio
@@ -27,7 +28,8 @@ def main():
         api_hash=Config.API_HASH,
         bot_token=Config.BOT_TOKEN,
         plugins={"root": "handlers"},
-        workers=8,
+        workers=32,          # Handle up to 32 concurrent operations
+        max_concurrent_transmissions=10,  # Up to 10 simultaneous uploads/downloads
     )
 
     app.run()
