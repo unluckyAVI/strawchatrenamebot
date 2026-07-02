@@ -274,9 +274,8 @@ def apply_template(template: str, result: RenameResult) -> str:
     out = re.sub(r'\[\s*\]|\(\s*\)', '', out)
     # Collapse spaces
     out = re.sub(r'\s{2,}', ' ', out).strip()
-    # Remove trailing/leading spaces around brackets
-    out = re.sub(r'\s+\[', '[', out)
-    out = re.sub(r'\]\s+\[', '][', out)
+    
+    
 
     return out
 
