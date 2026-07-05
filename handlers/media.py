@@ -167,16 +167,7 @@ async def _process_file(client: Client, message: Message, chat_id: int):
             )
         except Exception as e:
             logger.exception("FFmpeg failed")
-            err_msg = str(e)
-            if "ffprobe failed" in err_msg:
-                msg = (
-                    "❌ **File rejected!**\n\n"
-                    "Could not read stream info from this file.\n"
-                    "Metadata cannot be embedded without stream data."
-                )
-                await status.edit_text(msg)
-            else:
-                await status.edit_text(f"❌ FFmpeg error: {e}")
+            await status.edit_text(f"❌ FFmpeg error: {e}")
             _cleanup(dl_path, final_path)
             return
         finally:
