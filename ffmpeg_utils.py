@@ -26,6 +26,10 @@ _LANG_MAP: dict[str, str] = {
 _FFMPEG  = shutil.which("ffmpeg")  or "ffmpeg"
 _FFPROBE = shutil.which("ffprobe") or "ffprobe"
 
+import logging as _log
+_log.getLogger(__name__).info("FFmpeg path: %s", _FFMPEG)
+_log.getLogger(__name__).info("FFprobe path: %s", _FFPROBE)
+
 
 async def _run(*args: str) -> tuple[int, str, str]:
     proc = await asyncio.create_subprocess_exec(
@@ -44,7 +48,7 @@ async def probe_streams(path: str) -> list[dict]:
         "-show_streams", path,
     )
     if code != 0:
-        raise RuntimeError(f"ffprobe failed: {err.strip()}")
+        raise RuntimeError(f"ffprobe failed: {err.strip()[:500]}")
     return json.loads(out).get("streams", [])
 
 
