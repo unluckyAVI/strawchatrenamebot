@@ -1,7 +1,6 @@
 """
 StraWchat Rename Bot — Main entry point
 Telegram: @StraWchatOfficial
-Max 4 concurrent file tasks for optimal speed.
 """
 
 import logging
@@ -25,8 +24,7 @@ def main():
         api_hash=Config.API_HASH,
         bot_token=Config.BOT_TOKEN,
         plugins={"root": "handlers"},
-        workers=16,
-        max_concurrent_transmissions=2,
+        workers=8,
     )
 
     app.run()
