@@ -85,8 +85,12 @@ _SE_PATTERNS = [
     (re.compile(r'S(\d{1,2})\s*[-_]\s*E(\d{1,3})', re.IGNORECASE), True, 1, 2),
     # S01.E05
     (re.compile(r'S(\d{1,2})\.E(\d{1,3})', re.IGNORECASE), True, 1, 2),
+    # [S5] [EP-21], [S05] [EP-21], [S5][EP21]
+    (re.compile(r'\[S(\d{1,2})\]\s*\[EP?-?(\d{1,3})\]', re.IGNORECASE), True, 1, 2),
     # [S01][05], [S01] [05], [S01][E05]
     (re.compile(r'\[S(\d{1,2})\]\s*\[E?(\d{1,3})\]', re.IGNORECASE), True, 1, 2),
+    # S5 EP-21, S05 EP21, S5 EP 21
+    (re.compile(r'S(\d{1,2})\s+EP?-?\s*(\d{1,3})(?!\d)', re.IGNORECASE), True, 1, 2),
     # S01 EP05, S01 Ep05
     (re.compile(r'S(\d{1,2})\s+Ep?(\d{1,3})', re.IGNORECASE), True, 1, 2),
     # S02 - 01 (season dash episode WITHOUT E prefix — very common in anime)
@@ -272,12 +276,11 @@ def apply_template(template: str, result: RenameResult) -> str:
 
     # Remove empty bracket groups
     out = re.sub(r'\[\s*\]|\(\s*\)', '', out)
-    # Collapse spaces
+    # Ensure space before [ and after ]
+    out = re.sub(r'(?<=\S)\[', ' [', out)
+    out = re.sub(r'\](?=[^\s\.])', '] ', out)
+    # Collapse multiple spaces
     out = re.sub(r'\s{2,}', ' ', out).strip()
-    # Remove trailing/leading spaces around brackets
-    out = re.sub(r'\s+\[', '[', out)
-    out = re.sub(r'\]\s+\[', '][', out)
-
     return out
 
 
