@@ -1,6 +1,6 @@
 """
-Media handler — concurrent pipeline with max 4 tasks.
-Limits concurrent processing to 4 files for optimal speed.
+Media handler — concurrent pipeline.
+Download happens freely, FFmpeg+upload limited to 3 concurrent.
 """
 
 from __future__ import annotations
@@ -24,9 +24,8 @@ from handlers.auth import is_admin
 
 logger = logging.getLogger(__name__)
 
-# ── Semaphore limits concurrent tasks to 4 ───────────────────────────────────
+# Semaphore only limits FFmpeg+upload (CPU heavy), NOT download
 _semaphore = asyncio.Semaphore(3)
-_queue_count = 0
 
 
 def _get_media(message: Message):
@@ -110,11 +109,6 @@ async def handle_text(client: Client, message: Message):
 # ── Core processing function ──────────────────────────────────────────────────
 
 async def _process_file(client: Client, message: Message, chat_id: int):
-    """
-    Full pipeline for one file.
-    Waits for semaphore slot (max 4 concurrent) then processes.
-    """
-    global _queue_count
     state = state_manager.get(chat_id)
     raw_name = _get_file_name(message)
 
@@ -125,36 +119,24 @@ async def _process_file(client: Client, message: Message, chat_id: int):
     else:
         out_name = _sanitise(build_filename(raw_name, state.fmt))
 
-    # ── Wait for free slot ────────────────────────────────────────────────────
-    _queue_count += 1
-    queue_pos = _queue_count
+    status = await message.reply_text(f"⏳ Starting…\n`{out_name}`")
 
-    if _semaphore.locked():
-        status = await message.reply_text(
-            f"⏳ **Queued** (position {queue_pos})\n`{out_name}`\n\n"
-            f"Waiting for a free slot…"
+    # ── Download (NO semaphore — runs at full speed always) ───────────────────
+    ext = Path(raw_name).suffix or ""
+    dl_path = os.path.join(Config.DOWNLOAD_DIR, f"dl_{_uid()}{ext}")
+    try:
+        await status.edit_text(f"⏬ **Downloading…**\n`{raw_name}`")
+        dl_reporter = ProgressReporter(status, "⏬ Downloading", raw_name)
+        dl_path = await client.download_media(
+            message, file_name=dl_path, progress=dl_reporter.update,
         )
-    else:
-        status = await message.reply_text(f"⏳ Starting…\n`{out_name}`")
+    except Exception as e:
+        logger.exception("Download failed")
+        await status.edit_text(f"❌ Download failed: {e}")
+        return
 
+    # ── FFmpeg + Upload (semaphore limits to 3 concurrent) ────────────────────
     async with _semaphore:
-        _queue_count = max(0, _queue_count - 1)
-        logger.info("[%s] Processing: %s", chat_id, raw_name)
-
-        # ── Download ──────────────────────────────────────────────────────────
-        ext = Path(raw_name).suffix or ""
-        dl_path = os.path.join(Config.DOWNLOAD_DIR, f"dl_{_uid()}{ext}")
-        try:
-            await status.edit_text(f"⏬ **Downloading…**\n`{raw_name}`")
-            dl_reporter = ProgressReporter(status, "⏬ Downloading", raw_name)
-            dl_path = await client.download_media(
-                message, file_name=dl_path, progress=dl_reporter.update,
-            )
-        except Exception as e:
-            logger.exception("Download failed")
-            await status.edit_text(f"❌ Download failed: {e}")
-            return
-
         # ── FFmpeg ────────────────────────────────────────────────────────────
         final_path = os.path.join(Config.OUTPUT_DIR, f"{_uid()}_{out_name}")
         try:
@@ -195,7 +177,6 @@ async def _process_file(client: Client, message: Message, chat_id: int):
             await status.edit_text(f"⏫ **Uploading…**\n`{out_name}`")
             up_reporter = ProgressReporter(status, "⏫ Uploading", out_name)
 
-            # Stream directly from disk — no RAM loading, full speed ✅
             await client.send_document(
                 chat_id=chat_id,
                 document=final_path,
@@ -224,8 +205,6 @@ async def _process_file(client: Client, message: Message, chat_id: int):
 async def handle_media(client: Client, message: Message):
     if not is_admin(message.from_user.id):
         return
-
-    # Fire each file as independent task — semaphore limits to 4 concurrent
     asyncio.create_task(
         _process_file(client, message, message.chat.id)
     )
