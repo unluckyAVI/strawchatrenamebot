@@ -13,7 +13,7 @@ _RE_EXT = re.compile(r'\.(mkv|mp4|avi|mov|wmv|flv|webm|m4v|ts|m2ts|mp3|flac|aac|
 
 # ── Quality patterns ──────────────────────────────────────────────────────────
 _QUALITY_MAP = {
-    r'4k|2160p': 'HDrip',
+    r'4k|2160p': '4K',
     r'1080p': '1080p',
     r'720p': '720p',
     r'480p': '480p',
@@ -85,8 +85,12 @@ _SE_PATTERNS = [
     (re.compile(r'S(\d{1,2})\s*[-_]\s*E(\d{1,3})', re.IGNORECASE), True, 1, 2),
     # S01.E05
     (re.compile(r'S(\d{1,2})\.E(\d{1,3})', re.IGNORECASE), True, 1, 2),
+    # [S5] [EP-21], [S05] [EP-21], [S5][EP21]
+    (re.compile(r'\[S(\d{1,2})\]\s*\[EP?-?(\d{1,3})\]', re.IGNORECASE), True, 1, 2),
     # [S01][05], [S01] [05], [S01][E05]
     (re.compile(r'\[S(\d{1,2})\]\s*\[E?(\d{1,3})\]', re.IGNORECASE), True, 1, 2),
+    # S5 EP-21, S05 EP21, S5 EP 21
+    (re.compile(r'S(\d{1,2})\s+EP?-?\s*(\d{1,3})(?!\d)', re.IGNORECASE), True, 1, 2),
     # S01 EP05, S01 Ep05
     (re.compile(r'S(\d{1,2})\s+Ep?(\d{1,3})', re.IGNORECASE), True, 1, 2),
     # S02 - 01 (season dash episode WITHOUT E prefix — very common in anime)
@@ -274,8 +278,9 @@ def apply_template(template: str, result: RenameResult) -> str:
     out = re.sub(r'\[\s*\]|\(\s*\)', '', out)
     # Collapse spaces
     out = re.sub(r'\s{2,}', ' ', out).strip()
-    
-    
+    # Remove trailing/leading spaces around brackets
+    out = re.sub(r'\s+\[', '[', out)
+    out = re.sub(r'\]\s+\[', '][', out)
 
     return out
 

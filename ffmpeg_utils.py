@@ -44,7 +44,7 @@ async def probe_streams(path: str) -> list[dict]:
         "-show_streams", path,
     )
     if code != 0:
-        raise RuntimeError(f"ffprobe failed: {err.strip()}")
+        raise RuntimeError(f"ffprobe failed: {err.strip()[:500]}")
     return json.loads(out).get("streams", [])
 
 
@@ -61,8 +61,7 @@ async def embed_metadata(
 ) -> None:
     """
     Copy-encode with full metadata embedding.
-    meta_overrides: dict with keys title/author/artist/encoder/copyright/video/audio/subtitle
-    to override defaults.
+    meta_overrides: dict with keys title/author/encoder/copyright to override defaults.
     """
     streams = await probe_streams(input_path)
     ext = Path(output_path).suffix.lower()
@@ -77,14 +76,13 @@ async def embed_metadata(
     overrides = meta_overrides or {}
     meta_title     = overrides.get("title",     Config.METADATA_TITLE)
     meta_author    = overrides.get("author",    Config.METADATA_AUTHOR)
-    meta_artist    = overrides.get("artist",    meta_author)
     meta_encoder   = overrides.get("encoder",   Config.METADATA_ENCODER)
     meta_copyright = overrides.get("copyright", Config.METADATA_COPYRIGHT)
 
     global_meta = {
         "title":      meta_title,
         "author":     meta_author,
-        "artist":     meta_artist,
+        "artist":     meta_author,
         "comment":    meta_author,
         "encoded_by": meta_encoder,
         "encoder":    meta_encoder,
@@ -97,33 +95,23 @@ async def embed_metadata(
     cmd += ["-c", "copy", "-ignore_unknown"]
 
     video_idx = audio_idx = sub_idx = 0
-    custom_video_title = overrides.get("video")
-    custom_audio_title = overrides.get("audio")
-    custom_subtitle_title = overrides.get("subtitle")
-
     for stream in streams:
         stype = stream.get("codec_type", "")
         tags  = stream.get("tags", {})
 
         if stype == "video":
-            title = custom_video_title or f"Encoded By :- Team {Config.CHANNEL_TAG}"
-            cmd += [f"-metadata:s:v:{video_idx}", f"title={title}"]
+            cmd += [f"-metadata:s:v:{video_idx}",
+                    f"title=Encoded By :- Team {Config.CHANNEL_TAG}"]
             video_idx += 1
         elif stype == "audio":
-            if custom_audio_title:
-                title = custom_audio_title
-            else:
-                label = _lang_label(tags)
-                title = f"{label} tg:- [{Config.CHANNEL_TAG}]"
-            cmd += [f"-metadata:s:a:{audio_idx}", f"title={title}"]
+            label = _lang_label(tags)
+            cmd += [f"-metadata:s:a:{audio_idx}",
+                    f"title={label} tg:- [{Config.CHANNEL_TAG}]"]
             audio_idx += 1
         elif stype == "subtitle":
-            if custom_subtitle_title:
-                title = custom_subtitle_title
-            else:
-                label = _lang_label(tags)
-                title = f"{label} tg:- [{Config.CHANNEL_TAG}]"
-            cmd += [f"-metadata:s:s:{sub_idx}", f"title={title}"]
+            label = _lang_label(tags)
+            cmd += [f"-metadata:s:s:{sub_idx}",
+                    f"title={label} tg:- [{Config.CHANNEL_TAG}]"]
             sub_idx += 1
 
     cmd += ["-map", "0", "-ignore_unknown"]
