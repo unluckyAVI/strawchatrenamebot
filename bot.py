@@ -26,7 +26,7 @@ def main():
         bot_token=Config.BOT_TOKEN,
         plugins={"root": "handlers"},
         workers=16,
-        max_concurrent_transmissions=3,
+        max_concurrent_transmissions=2,
     )
 
     app.run()
