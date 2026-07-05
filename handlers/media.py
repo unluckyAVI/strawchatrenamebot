@@ -9,6 +9,7 @@ import re
 import uuid
 import logging
 import asyncio
+import io
 from pathlib import Path
 from typing import Optional
 
@@ -166,16 +167,7 @@ async def _process_file(client: Client, message: Message, chat_id: int):
             )
         except Exception as e:
             logger.exception("FFmpeg failed")
-            err_msg = str(e)
-            if "ffprobe failed" in err_msg:
-                msg = (
-                    "❌ **File rejected!**\n\n"
-                    "Could not read stream info from this file.\n"
-                    "Metadata cannot be embedded without stream data."
-                )
-                await status.edit_text(msg)
-            else:
-                await status.edit_text(f"❌ FFmpeg error: {e}")
+            await status.edit_text(f"❌ FFmpeg error: {e}")
             _cleanup(dl_path, final_path)
             return
         finally:
@@ -195,11 +187,13 @@ async def _process_file(client: Client, message: Message, chat_id: int):
             await status.edit_text(f"⏫ **Uploading…**\n`{out_name}`")
             up_reporter = ProgressReporter(status, "⏫ Uploading", out_name)
 
-            # Stream directly from disk — no RAM loading, full speed ✅
+            with open(final_path, "rb") as f:
+                buf = io.BytesIO(f.read())
+            buf.name = out_name
+
             await client.send_document(
                 chat_id=chat_id,
-                document=final_path,
-                file_name=out_name,
+                document=buf,
                 caption=out_name,
                 thumb=thumb_for_upload,
                 progress=up_reporter.update,

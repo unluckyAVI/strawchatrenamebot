@@ -29,8 +29,8 @@ _QUALITY_MAP = {
 
 # ── Audio patterns ────────────────────────────────────────────────────────────
 _AUDIO_MAP = {
-    r'dual.?audio|dual': 'Dual',
-    r'multi.?audio|multi': 'Multi',
+    r'dual.?audio|dual': 'Dual Audio',
+    r'multi.?audio|multi': 'Multi Audio',
     r'hindi|hin': 'Hindi',
     r'english|eng': 'English',
     r'tamil|tam': 'Tamil',
@@ -85,12 +85,8 @@ _SE_PATTERNS = [
     (re.compile(r'S(\d{1,2})\s*[-_]\s*E(\d{1,3})', re.IGNORECASE), True, 1, 2),
     # S01.E05
     (re.compile(r'S(\d{1,2})\.E(\d{1,3})', re.IGNORECASE), True, 1, 2),
-    # [S5] [EP-21], [S05] [EP-21], [S5][EP21]
-    (re.compile(r'\[S(\d{1,2})\]\s*\[EP?-?(\d{1,3})\]', re.IGNORECASE), True, 1, 2),
     # [S01][05], [S01] [05], [S01][E05]
     (re.compile(r'\[S(\d{1,2})\]\s*\[E?(\d{1,3})\]', re.IGNORECASE), True, 1, 2),
-    # S5 EP-21, S05 EP21, S5 EP 21
-    (re.compile(r'S(\d{1,2})\s+EP?-?\s*(\d{1,3})(?!\d)', re.IGNORECASE), True, 1, 2),
     # S01 EP05, S01 Ep05
     (re.compile(r'S(\d{1,2})\s+Ep?(\d{1,3})', re.IGNORECASE), True, 1, 2),
     # S02 - 01 (season dash episode WITHOUT E prefix — very common in anime)
