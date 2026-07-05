@@ -26,7 +26,7 @@ from handlers.auth import is_admin
 logger = logging.getLogger(__name__)
 
 # ── Semaphore limits concurrent tasks to 4 ───────────────────────────────────
-_semaphore = asyncio.Semaphore(4)
+_semaphore = asyncio.Semaphore(2)
 _queue_count = 0
 
 
