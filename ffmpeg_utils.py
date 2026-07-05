@@ -44,7 +44,7 @@ async def probe_streams(path: str) -> list[dict]:
         "-show_streams", path,
     )
     if code != 0:
-        raise RuntimeError(f"ffprobe failed: {err.strip()[:500]}")
+        raise RuntimeError(f"ffprobe failed: {err.strip()}")
     return json.loads(out).get("streams", [])
 
 
