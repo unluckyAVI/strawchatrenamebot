@@ -29,8 +29,8 @@ _QUALITY_MAP = {
 
 # ── Audio patterns ────────────────────────────────────────────────────────────
 _AUDIO_MAP = {
-    r'dual.?audio|dual': 'Dual Audio',
-    r'multi.?audio|multi': 'Multi Audio',
+    r'dual.?audio|dual': 'Dual',
+    r'multi.?audio|multi': 'Multi',
     r'hindi|hin': 'Hindi',
     r'english|eng': 'English',
     r'tamil|tam': 'Tamil',
